@@ -124,10 +124,3 @@ See `/infra/lambda-setup.md` for full deployment steps.
 See `.env.example`:
 - `VITE_API_BASE_URL` — API Gateway endpoint
 - `VITE_CLOUDFRONT_URL` — CloudFront distribution URL for output videos
-
-## Resume Bullet Points (reference)
-
-- Architected a serverless event-driven media pipeline on AWS — S3 upload triggers Lambda processing via FFmpeg Layer, output delivered through CloudFront CDN with zero always-on infrastructure
-- Implemented direct browser-to-S3 uploads via pre-signed URLs, eliminating backend as a file transfer bottleneck and reducing upload latency
-- Configured CloudWatch dashboards and alarms to monitor Lambda duration, error rate, and memory utilization; used metrics to benchmark processing performance
-- Separated input/output S3 buckets with scoped IAM policies to prevent Lambda re-trigger loops and enforce least-privilege access
