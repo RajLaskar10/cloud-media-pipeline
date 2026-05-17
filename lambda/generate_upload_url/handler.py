@@ -38,12 +38,24 @@ def lambda_handler(event, context):
                 'url': presigned_url
             })
 
+        trigger_key = f"jobs/{job_id}/trigger.json"
+        trigger_url = s3_client.generate_presigned_url(
+            'put_object',
+            Params={
+                'Bucket': INPUT_BUCKET,
+                'Key': trigger_key,
+                'ContentType': 'application/json'
+            },
+            ExpiresIn=URL_EXPIRY_SECONDS
+        )
+
         return {
             'statusCode': 200,
             'headers': cors_headers(),
             'body': json.dumps({
                 'job_id': job_id,
-                'upload_urls': upload_urls
+                'upload_urls': upload_urls,
+                'trigger_url': trigger_url
             })
         }
 

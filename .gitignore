@@ -17,6 +17,7 @@ frontend/build/
 
 # Lambda build artifacts
 lambda/**/*.zip
+lambda/**/bin/
 lambda/**/__pycache__/
 *.pyc
 

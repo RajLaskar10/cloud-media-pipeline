@@ -27,8 +27,8 @@ export default function UploadZone({ onComplete, onError }) {
     setUploading(true)
     setProgress(0)
     try {
-      const { job_id, upload_urls } = await getUploadUrls(files.length)
-      await uploadFiles(files, upload_urls, setProgress)
+      const { job_id, upload_urls, trigger_url } = await getUploadUrls(files.length)
+      await uploadFiles(files, upload_urls, trigger_url, setProgress)
       onComplete(job_id)
     } catch (err) {
       onError(err.message || 'Upload failed')

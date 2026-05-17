@@ -19,13 +19,14 @@ function mockApiPlugin() {
               key: `jobs/${job_id}/input_${String(i).padStart(4, '0')}.jpg`,
               url: `http://${req.headers.host}/mock-upload/${i}`,
             }))
+            const trigger_url = `http://${req.headers.host}/mock-trigger`
             res.writeHead(200, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({ job_id, upload_urls }))
+            res.end(JSON.stringify({ job_id, upload_urls, trigger_url }))
           })
           return
         }
 
-        if (req.method === 'PUT' && req.url?.startsWith('/mock-upload/')) {
+        if (req.method === 'PUT' && (req.url?.startsWith('/mock-upload/') || req.url === '/mock-trigger')) {
           res.writeHead(200)
           res.end()
           return

@@ -44,8 +44,8 @@ def lambda_handler(event, context):
 
 
 def extract_job_id(key):
-    # key format: jobs/{job_id}/input_0000.jpg
-    match = re.match(r'jobs/([^/]+)/input_\d+\.jpg', key)
+    # key format: jobs/{job_id}/trigger.json
+    match = re.match(r'jobs/([^/]+)/trigger\.json', key)
     return match.group(1) if match else None
 
 
@@ -56,7 +56,8 @@ def process_job(job_id):
     # List all input files for this job
     paginator = s3_client.get_paginator('list_objects_v2')
     pages = paginator.paginate(Bucket=INPUT_BUCKET, Prefix=f'jobs/{job_id}/')
-    keys = [obj['Key'] for page in pages for obj in page.get('Contents', [])]
+    keys = [obj['Key'] for page in pages for obj in page.get('Contents', [])
+            if obj['Key'].endswith('.jpg')]
 
     if not keys:
         logger.error(f"No input files found for job {job_id}")

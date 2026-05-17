@@ -1,64 +1,56 @@
 # Cloud Media Processing Pipeline
 
-A serverless, event-driven media processing pipeline on AWS. Users upload images via a React frontend, which triggers an automated Lambda-based conversion pipeline that stitches images into a video using FFmpeg and delivers the output via CloudFront CDN.
+A serverless, event-driven media processing pipeline on AWS. Users upload JPEG images via a React frontend; an automated Lambda pipeline stitches them into an MP4 using FFmpeg and delivers the result via CloudFront CDN — no servers, no polling, no manual steps.
 
-## Why This Is Interesting Engineering
+## Demo
 
-The conversion itself is straightforward. The architecture is not. This pipeline is fully serverless — no EC2, no always-on server. An S3 event triggers Lambda, Lambda runs FFmpeg, output lands in a separate S3 bucket, and CloudFront serves it. Every step is measurable via CloudWatch, giving real benchmark data for performance claims.
+| Step | Screenshot |
+|---|---|
+| Upload zone — drop or click to select JPEGs | ![Upload zone idle](docs/screenshots/01-upload-zone.png) |
+| macOS file picker | ![File picker](docs/screenshots/02-file-picker.png) |
+| 3 images queued for upload | ![3 files selected](docs/screenshots/03-files-selected.png) |
+| Processing — Lambda + FFmpeg running | ![Processing spinner](docs/screenshots/04-processing.png) |
+| Output video — frame 1 (aurora borealis) | ![Video frame 1](docs/screenshots/05-video-frame-1.png) |
+| Output video — frame 2 (light field) | ![Video frame 2](docs/screenshots/06-video-frame-2.png) |
+| Output video — frame 3 (cat) | ![Video frame 3](docs/screenshots/07-video-frame-3.png) |
+
+## Architecture
+
+```mermaid
+flowchart TD
+    A([Browser / React]) -->|POST /upload-url| B[API Gateway\nHTTP API]
+    B --> C[Lambda\ngenerate_upload_url]
+    C -->|pre-signed PUT URLs| A
+    A -->|PUT image files directly| D[(S3\ninput-bucket)]
+    A -->|PUT trigger.json after all uploads| D
+    D -->|S3 event on trigger.json| E[Lambda\nprocess_media]
+    E -->|list + download .jpg files| D
+    E -->|FFmpeg via Lambda Layer| E
+    E -->|upload output.mp4| F[(S3\noutput-bucket)]
+    F -->|OAC| G[CloudFront CDN]
+    G -->|stream / download MP4| A
+    E -.->|logs + metrics| H[CloudWatch\nDashboard + Alarms]
+```
+
+**Key design decisions:**
+
+- **Pre-signed URLs** — the browser PUTs files directly to S3. Lambda never handles raw bytes, so file size doesn't affect Lambda memory or duration.
+- **Trigger file pattern** — the frontend PUTs all images first, then uploads `trigger.json`. Lambda fires only on `trigger.json`, guaranteeing every image is present before processing starts. This eliminates the race condition you get when triggering on each individual upload.
+- **Separate input/output buckets** — clean IAM boundary; Lambda can't accidentally read its own output as new input.
+- **FFmpeg as a Lambda Layer** — keeps the deployment package small; the layer is reusable across functions.
+- **CloudFront with OAC** — output bucket is fully private; only CloudFront can read it.
 
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
 | Frontend | React (Vite), TailwindCSS |
-| Upload | AWS S3 Pre-signed URLs (direct browser → S3, no backend bottleneck) |
-| Trigger | S3 Event Notification → Lambda |
+| Upload | S3 Pre-signed URLs (direct browser → S3) |
+| API | AWS API Gateway HTTP API + Lambda |
 | Processing | AWS Lambda (Python 3.11) + FFmpeg Lambda Layer |
-| Storage | S3 input bucket + S3 output bucket (separate for IAM clarity) |
-| Delivery | AWS CloudFront (output video CDN) |
-| API | AWS API Gateway + Lambda (pre-signed URL generation) |
-| Monitoring | AWS CloudWatch (logs, metrics, alarms) |
-
-## Architecture
-
-```
-[React Frontend]
-      |
-      | 1. Request pre-signed upload URL
-      v
-[API Gateway] → [Lambda: generate_upload_url]
-      |
-      | 2. Returns pre-signed S3 URL
-      v
-[React Frontend]
-      |
-      | 3. Direct upload to S3 (no backend in the loop)
-      v
-[S3: input-bucket]
-      |
-      | 4. S3 Event Notification (ObjectCreated)
-      v
-[Lambda: process_media]
-      |  - Downloads images from input bucket
-      |  - Runs FFmpeg (Lambda Layer) to stitch into video
-      |  - Uploads output .mp4 to output bucket
-      v
-[S3: output-bucket]
-      |
-      | 5. CloudFront serves output video
-      v
-[User downloads/streams video]
-      |
-[CloudWatch] ← logs + metrics from every Lambda invocation
-```
-
-## Key Design Decisions
-
-See `/docs/architecture.md` for full rationale. Short version:
-- **Pre-signed URLs** — browser uploads directly to S3, Lambda never handles raw file bytes. Removes a bottleneck and keeps Lambda fast.
-- **Separate input/output buckets** — cleaner IAM policies, avoids accidental re-triggering of Lambda on output writes.
-- **FFmpeg as a Lambda Layer** — keeps the deployment package small, layer is reusable across functions.
-- **CloudWatch alarms** — Lambda timeout and error rate alarms mean you know immediately when something breaks.
+| Storage | S3 input bucket + S3 output bucket |
+| Delivery | AWS CloudFront (OAC, PriceClass_100) |
+| Monitoring | AWS CloudWatch (logs, metrics, alarms, dashboard) |
 
 ## Project Structure
 
@@ -67,60 +59,52 @@ cloud-media-pipeline/
 ├── frontend/                        # React upload UI
 │   └── src/
 │       ├── components/
-│       │   ├── UploadZone.jsx       # Drag-and-drop image upload
-│       │   ├── JobStatus.jsx        # Polling for processing completion
-│       │   └── VideoPlayer.jsx      # Preview + download output video
-│       ├── pages/
-│       │   └── Home.jsx
+│       │   ├── UploadZone.jsx       # Drag-and-drop image upload + progress bar
+│       │   ├── JobStatus.jsx        # Polls CloudFront until output video appears
+│       │   └── VideoPlayer.jsx      # Streams output MP4 + download link
+│       ├── pages/Home.jsx
 │       └── utils/
 │           ├── api.js               # API Gateway calls
-│           └── s3Upload.js          # Direct-to-S3 upload logic
+│           └── s3Upload.js          # Direct-to-S3 upload + trigger file logic
 │
 ├── lambda/
-│   ├── generate_upload_url/
-│   │   └── handler.py               # Generates S3 pre-signed PUT URL
-│   ├── process_media/
-│   │   └── handler.py               # S3-triggered FFmpeg processing
-│   └── layers/
-│       └── README.md                # How to build + attach FFmpeg layer
+│   ├── generate_upload_url/handler.py   # Returns pre-signed PUT URLs + trigger URL
+│   ├── process_media/handler.py         # S3-triggered FFmpeg stitching
+│   └── layers/README.md                 # How to build + publish the FFmpeg layer
 │
 ├── infra/
-│   ├── s3-setup.md                  # Bucket config, CORS, event notifications
-│   ├── lambda-setup.md              # Lambda config, IAM roles, env vars
-│   ├── apigateway-setup.md          # API Gateway routes + CORS
-│   └── cloudfront-setup.md          # CloudFront distribution for output bucket
+│   ├── s3-setup.md                  # Bucket config, CORS, lifecycle rules, event notifications
+│   ├── lambda-setup.md              # Lambda config, IAM roles, env vars, layer attachment
+│   ├── apigateway-setup.md          # HTTP API routes + CORS
+│   └── cloudfront-setup.md          # Distribution, OAC, price class
 │
 ├── docs/
-│   ├── architecture.md              # Design decisions + tradeoffs
-│   ├── benchmarks.md                # CloudWatch-based performance data (fill in after building)
-│   └── cloudwatch-setup.md          # Dashboards, alarms, log insights queries
+│   ├── architecture.md              # Full design rationale + tradeoffs
+│   ├── benchmarks.md                # CloudWatch-based performance data
+│   ├── cloudwatch-setup.md          # Dashboard, alarms, log insights queries
+│   └── screenshots/                 # Demo screenshots used in this README
 │
+├── deployment.md                    # Step-by-step rebuild guide + free-tier checklist + teardown
 └── .env.example                     # Frontend environment variables
 ```
 
-## Getting Started
+## Local Development
 
-### Prerequisites
-- AWS account with appropriate IAM permissions
-- Node.js 18+ (frontend)
-- Python 3.11+ (Lambda local testing)
-- AWS CLI configured (`aws configure`)
-
-### Local Frontend Setup
+The Vite dev server includes a mock API plugin that simulates both the pre-signed URL endpoint and S3 uploads, so the full upload flow can be tested without any AWS infrastructure.
 
 ```bash
 cd frontend
-cp ../.env.example .env
+cp ../.env.example .env   # leave VITE_API_URL blank for local mock mode
 npm install
 npm run dev
 ```
 
-### Deploy Lambda Functions
+Drop some JPEGs in the upload zone — the mock returns a fake `job_id` and simulates the PUT calls, so you can verify the UI flow end-to-end locally.
 
-See `/infra/lambda-setup.md` for full deployment steps.
+## Deploying to AWS
 
-### Environment Variables
+See [`deployment.md`](deployment.md) for the full step-by-step build order, free-tier checklist, and teardown instructions.
 
-See `.env.example`:
-- `VITE_API_BASE_URL` — API Gateway endpoint
+Environment variables needed in `frontend/.env`:
+- `VITE_API_URL` — API Gateway base URL (e.g. `https://<id>.execute-api.us-east-1.amazonaws.com`)
 - `VITE_CLOUDFRONT_URL` — CloudFront distribution URL for output videos
