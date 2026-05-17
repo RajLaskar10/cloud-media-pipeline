@@ -18,18 +18,29 @@ A serverless, event-driven media processing pipeline on AWS. Users upload JPEG i
 
 ```mermaid
 flowchart TD
-    A([Browser / React]) -->|POST /upload-url| B[API Gateway\nHTTP API]
-    B --> C[Lambda\ngenerate_upload_url]
-    C -->|pre-signed PUT URLs| A
-    A -->|PUT image files directly| D[(S3\ninput-bucket)]
-    A -->|PUT trigger.json after all uploads| D
-    D -->|S3 event on trigger.json| E[Lambda\nprocess_media]
-    E -->|list + download .jpg files| D
-    E -->|FFmpeg via Lambda Layer| E
-    E -->|upload output.mp4| F[(S3\noutput-bucket)]
-    F -->|OAC| G[CloudFront CDN]
-    G -->|stream / download MP4| A
-    E -.->|logs + metrics| H[CloudWatch\nDashboard + Alarms]
+    Browser([Browser / React])
+    APIGW[API Gateway]
+    GenURL[Lambda: generate_upload_url]
+    InputBucket[(S3 input bucket)]
+    ProcMedia[Lambda: process_media]
+    FFmpeg[[FFmpeg Lambda Layer]]
+    OutputBucket[(S3 output bucket)]
+    CF[CloudFront CDN]
+    CW[CloudWatch]
+
+    Browser -->|POST /upload-url| APIGW
+    APIGW --> GenURL
+    GenURL -->|pre-signed PUT URLs + trigger URL| Browser
+    Browser -->|PUT images directly| InputBucket
+    Browser -->|PUT trigger.json after all uploads| InputBucket
+    InputBucket -->|S3 event on trigger.json| ProcMedia
+    ProcMedia -->|download .jpg files| InputBucket
+    ProcMedia --> FFmpeg
+    FFmpeg -->|encoded output.mp4| ProcMedia
+    ProcMedia -->|upload output.mp4| OutputBucket
+    OutputBucket -->|OAC| CF
+    CF -->|stream video| Browser
+    ProcMedia -.->|logs + metrics| CW
 ```
 
 **Key design decisions:**
